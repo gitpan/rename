@@ -1,7 +1,7 @@
 use Config;
 use File::Basename qw(basename dirname);
 
-($VERSION)=' $Id: rename.PL,v 1.4 2000/01/26 18:13:50 pederst Exp $ '=~/v\s*(\d+(?:\.\d+)+)/;
+($VERSION)=' $Id: rename.PL,v 1.6 2008/08/18 16:45:06 peder Exp $ '=~/v\s*(\d+(?:\.\d+)+)/;
 
 chdir(dirname($0));
 ($file = basename($0)) =~ s/\.PL$//;
@@ -17,10 +17,13 @@ $Config{'startperl'}
 
 #line 18
 
+use strict;
+
 use Getopt::Long;
 use Text::Abbrev;
+use File::Basename;
 
-\$VERSION = '$VERSION';
+my \$VERSION = '$VERSION';
 
 !DO!SUBST!
 
@@ -28,19 +31,22 @@ print OUT<<'!NO!SUBST!';
 Getopt::Long::config(qw(bundling));
 $Getopt::Long::prefix = '--';
 
+my $ME = $0;
 ($ME = $0) =~ s!.*/!!;
 $| = 1;
 
-$nothing         = 0;
-$backup          = 0;
-$force           = 0;
-$interactive     = 0;
-$verbose         = 0;
-$help            = 0;
-$version         = 0;
-$linkonly        = 0;
-$backup_suffix   = $ENV{SIMPLE_BACKUP_SUFFIX} || '~';
-$version_control = $ENV{VERSION_CONTROL} || 'existing';
+my $nothing         = 0;
+my $backup          = 0;
+my $force           = 0;
+my $interactive     = 0;
+my $verbose         = 0;
+my $help            = 0;
+my $version         = 0;
+my $linkonly        = 0;
+my $backup_suffix   = $ENV{SIMPLE_BACKUP_SUFFIX} || '~';
+my $version_control = $ENV{VERSION_CONTROL} || 'existing';
+
+my $vcm             = 0;
 
 sub error {
     my($ERROR) = @_;
@@ -119,7 +125,7 @@ if ($backup) {
 	   }}{$vcm};
 }
 
-$op = shift
+my $op = shift
     or error('missing arguments');
 
 if (!@ARGV) {
@@ -128,10 +134,14 @@ if (!@ARGV) {
 }
 
 for (@ARGV) {
-    $was = $_;
-    eval $op;
+    my $was = $_;
+    {
+        no strict;
+        eval $op;
+    }
     die $@ if $@;
     next if $was eq $_;
+
     if (-e $_) {
         unless ($force) {
 	    if (! -w && -t) {
@@ -144,9 +154,10 @@ for (@ARGV) {
 	    }
 	}
 	if ($backup) {
+            my $old;
 	    if ($vcm) {
-		@old = sort {($a=~/~(\d*)~/)[0] <=> ($b=~/~(\d*)~/)[0]} <$_.~*~>;
-		($old = $old[-1]) =~ s/~(\d*)~$/'~'.($1+1).'~'/e;
+		($old) = sort {($b=~/~(\d*)~/)[0] <=> ($a=~/~(\d*)~/)[0]} <$_.~*~>;
+		$old =~ s/~(\d*)~$/'~'.($1+1).'~'/e;
 		if ($vcm & VCM_TEST) {
 		    $old ||= "$_$backup_suffix";
 		} elsif ($vcm & VCM_NUMBERED) {
@@ -167,6 +178,19 @@ for (@ARGV) {
     }
 
     print "$was ", $linkonly?"=":'-', "> $_\n" if $verbose || $nothing;
+
+    if (m,/,) {
+        my $dir = File::Basename::dirname($_);
+        unless (-d $dir) {
+            if ($nothing) {
+                print "mkdir: $dir\n" if $verbose;
+            }
+            else {
+                mkpath($dir) || next;
+            }
+         }
+    }
+
     unless ($nothing) {
         if ($linkonly) {
 	    link($was,$_) || warn "$ME: cannot create `$_': $!\n";
@@ -174,6 +198,32 @@ for (@ARGV) {
             rename($was,$_) || warn "$ME: cannot create `$_': $!\n";
 	}
     }
+}
+
+sub mkpath {
+    my($path) = @_;
+    $path .= '/' if $^O eq 'os2' and $path =~ /^\w:\z/s; # feature of CRT 
+    # Logic wants Unix paths, so go with the flow.
+    if ($^O eq 'VMS') {
+        next if $path eq '/';
+        $path = VMS::Filespec::unixify($path);
+        if ($path =~ m:^(/[^/]+)/?\z:) {
+            $path = $1.'/000000';
+        }
+    }
+    return 1 if -d $path;
+    my $parent = File::Basename::dirname($path);
+    unless (-d $parent or $path eq $parent) {
+        mkpath($parent) || return;
+    }
+    #print "mkdir: $path\n" if $verbose;
+    unless (mkdir($path, 0777)) {
+        unless (-d $path) {
+            warn "$ME: cannot mkdir `$path': $!\n";
+            return;
+        }
+    }
+    return 1;
 }
 
 __END__
