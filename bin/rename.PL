@@ -1,7 +1,7 @@
 use Config;
 use File::Basename qw(basename dirname);
 
-($VERSION)=' $Id: rename.PL,v 1.6 2008/08/18 16:45:06 peder Exp $ '=~/v\s*(\d+(?:\.\d+)+)/;
+($VERSION)=' $Id: rename.PL,v 1.8 2010/09/19 18:16:39 peder Exp $ '=~/v\s*(\d+(?:\.\d+)+)/;
 
 chdir(dirname($0));
 ($file = basename($0)) =~ s/\.PL$//;
@@ -35,23 +35,31 @@ my $ME = $0;
 ($ME = $0) =~ s!.*/!!;
 $| = 1;
 
-my $nothing         = 0;
-my $backup          = 0;
-my $force           = 0;
-my $interactive     = 0;
-my $verbose         = 0;
-my $help            = 0;
-my $version         = 0;
-my $linkonly        = 0;
-my $backup_suffix   = $ENV{SIMPLE_BACKUP_SUFFIX} || '~';
-my $version_control = $ENV{VERSION_CONTROL} || 'existing';
+my $opt_dryrun          = 0;
+my $opt_backup          = 0;
+my $opt_force           = 0;
+my $opt_interactive     = 0;
+my $opt_verbose         = 0;
+my $opt_help            = 0;
+my $opt_version         = 0;
+my $opt_linkonly        = 0;
+my $opt_prefix          = '';
+my $opt_suffix          = '';
+my $opt_basename_prefix = '';
+my $opt_vcm             = $ENV{RENAME_VERSION_CONTROL}
+                        || $ENV{VERSION_CONTROL}
+                        || 'existing';
 
-my $vcm             = 0;
+sub VCM_SIMPLE   { 0 }
+sub VCM_TEST     { 1 }
+sub VCM_NUMBERED { 2 }
+
+my $vcm;
 
 sub error {
     my($ERROR) = @_;
     print "$ME: $ERROR\n";
-    print "try: `$ME --help' for more information.\n";
+    print "Try `$ME --help' for more information.\n";
     exit 1;
 }
 
@@ -59,70 +67,79 @@ sub error {
     local $SIG{__WARN__} = sub {
 	if ($_[0] =~ /^Unknown option: (\S+)/) {
 	    error("unrecognized option `--$1'");
-	} else {
+	}
+        else {
 	    print @_;
 	}
     };
     GetOptions(
-	       'b|backup'             => \$backup,
-	       'f|force'              => \$force,
-	       'i|interactive'        => \$interactive,
-	       'v|verbose'            => \$verbose,
-	       'S|suffix=s'           => \$backup_suffix,
-	       'V|version-control=s'  => \$version_control,
-	       'n|just-print|dry-run' => \$nothing,
-               'l|link-only'          => \$linkonly,
-	       'help'                 => \$help,
-	       'version'              => \$version,
+	       'b|backup'             => \$opt_backup,
+               'B|prefix=s'           => \$opt_prefix,
+	       'f|force'              => \$opt_force,
+	       'h|help'               => \$opt_help,
+	       'i|interactive'        => \$opt_interactive,
+               'l|link-only'          => \$opt_linkonly,
+	       'n|just-print|dry-run' => \$opt_dryrun,
+	       'version'              => \$opt_version,
+	       'v|verbose'            => \$opt_verbose,
+	       'V|version-control=s'  => \$opt_vcm,
+               'Y|basename-prefix=s'  => \$opt_basename_prefix,
+	       'z|S|suffix=s'         => \$opt_suffix,
 	      );
 }
 
-if ($version) {
+if ($opt_version) {
     print "$ME $VERSION\n";
     exit 0;
 }
 
-if ($help) {
+if ($opt_help) {
     print<<HELP;
 Usage: $ME [OPTION]... PERLEXPR FILE...
 Rename FILE(s) using PERLEXPR on each filename.
 
-  -b, --backup                 make backup before removal
-  -f, --force                  remove existing destinations, never prompt
-  -i, --interactive            prompt before overwrite
-  -S, --suffix=SUFFIX          override the usual backup suffix
-  -v, --verbose                explain what is being done
-  -V, --version-control=WORD   override the usual version control
-  -n, --just-print, --dry-run  don't rename, implies --verbose
-  -l, --link-only              link file instead of reame
-      --help                   display this help and exit
-      --version                output version information and exit
+  -b, --backup                  make backup before removal
+  -B, --prefix=SUFFIX           set backup filename prefix
+  -f, --force                   remove existing destinations, never prompt
+  -i, --interactive             prompt before overwrite
+  -l, --link-only               link file instead of reame
+  -n, --just-print, --dry-run   don't rename, implies --verbose
+  -v, --verbose                 explain what is being done
+  -V, --version-control=METHOD  override the usual version control
+  -Y, --basename-prefix=PREFIX  set backup filename basename prefix
+  -z, -S, --suffix=SUFFIX       set backup filename suffix
+      --help                    display this help and exit
+      --version                 output version information and exit
 
 The backup suffix is ~, unless set with SIMPLE_BACKUP_SUFFIX.  The
 version control may be set with VERSION_CONTROL, values are:
 
-  t, numbered     make numbered backups
-  nil, existing   numbered if numbered backups exist, simple otherwise
-  never, simple   always make simple backups
+  numbered, t     make numbered backups
+  existing, nil   numbered if numbered backups exist, simple otherwise
+  simple, never   always make simple backups
 
 Report bugs to pederst\@cpan.org
 HELP
     exit 0; #'
 }
 
-sub VCM_TEST     { 0x0001 }
-sub VCM_NUMBERED { 0x0002 }
+if ($opt_backup) {
+    if ($opt_prefix || $opt_basename_prefix || $opt_suffix) {
+        $vcm = VCM_SIMPLE;
+    }
+    else {
+        $vcm = ${abbrev qw(nil existing t numbered never simple)}{$opt_vcm};
+        error("invalid version contol type `$opt_vcm'") unless $vcm;
+        $vcm = ${{ nil      => VCM_TEST,
+	           existing => VCM_TEST,
+	           t        => VCM_NUMBERED,
+                   numbered => VCM_NUMBERED,
+	           never    => VCM_SIMPLE,
+	           simple   => VCM_SIMPLE,
+	        }}{$vcm};
+    }
 
-if ($backup) {
-    $vcm = ${abbrev qw(nil existing t numbered never simple)}{$version_control};
-    error("invalid version contol type `$version_control'") unless $vcm;
-    $vcm = ${{ nil      => VCM_TEST,
-	       existing => VCM_TEST,
-	       t        => VCM_NUMBERED,
-	       numbered => VCM_NUMBERED,
-	       never    => 0,
-	       simple   => 0,
-	   }}{$vcm};
+    $opt_suffix ||= $ENV{SIMPLE_BACKUP_SUFFIX} || '~';
 }
 
 my $op = shift
@@ -143,47 +160,68 @@ for (@ARGV) {
     next if $was eq $_;
 
     if (-e $_) {
-        unless ($force) {
+        unless ($opt_force) {
 	    if (! -w && -t) {
 		printf "%s: overwrite `%s', overriding mode 0%03o? ",
                        $ME, $_, (stat _)[2]&0777;
 		next unless <STDIN> =~ /^y/i;
-	    } elsif ($interactive) {
+	    }
+            elsif ($opt_interactive) {
 		print "$ME: replace `$_'? ";
 		next unless <STDIN> =~ /^y/i;
 	    }
 	}
-	if ($backup) {
+	if ($opt_backup) {
             my $old;
-	    if ($vcm) {
-		($old) = sort {($b=~/~(\d*)~/)[0] <=> ($a=~/~(\d*)~/)[0]} <$_.~*~>;
-		$old =~ s/~(\d*)~$/'~'.($1+1).'~'/e;
-		if ($vcm & VCM_TEST) {
-		    $old ||= "$_$backup_suffix";
-		} elsif ($vcm & VCM_NUMBERED) {
+	    if ($vcm == VCM_SIMPLE) {
+                if (m,^(.*/)?(.*),) {
+		    $old = "$opt_prefix$1$opt_basename_prefix$2$opt_suffix";
+                }
+	    }
+            else {
+		($old) = sort {($b=~/~(\d+)~$/)[0] <=> ($a=~/~(\d+)~$/)[0]} <$_.~*~>;
+		$old =~ s/~(\d+)~$/'~'.($1+1).'~'/e;
+		if ($vcm == VCM_TEST) {
+                    unless ($old) {
+                        if (m,^(.*/)?(.*),) {
+	  	            $old = "$opt_prefix$1$opt_basename_prefix$2$opt_suffix";
+                        }
+                    }
+		}
+                elsif ($vcm == VCM_NUMBERED) {
 		    $old ||= "$_.~1~";
 		}
-	    } else {
-		$old = "$_$backup_suffix";
 	    }
-            print "backup: $_ -> $old\n" if $verbose && $nothing;
+            print "backup: $_ -> $old\n" if $opt_verbose && $opt_dryrun;
 
-            unless ($nothing) {
-                if (rename($_,$old)) {
-                    warn "$ME: cannot create `$_': $!\n";
+            unless ($opt_dryrun) {
+                if ($old =~ m,/,) {
+                    my $dir = File::Basename::dirname($old);
+                    unless (-d $dir) {
+                        if ($opt_dryrun) {
+                            print "mkdir: $dir\n" if $opt_verbose;
+                        }
+                        else {
+                            mkpath($dir) || next;
+                        }
+                    }
+                }
+                unless (rename($_,$old)) {
+                    warn "$ME: cannot create `$old': $!\n";
                     next;
                 }
             }
         }
     }
 
-    print "$was ", $linkonly?"=":'-', "> $_\n" if $verbose || $nothing;
+    print "$was ", $opt_linkonly ? "=" : '-', "> $_\n"
+       if $opt_verbose || $opt_dryrun;
 
     if (m,/,) {
         my $dir = File::Basename::dirname($_);
         unless (-d $dir) {
-            if ($nothing) {
-                print "mkdir: $dir\n" if $verbose;
+            if ($opt_dryrun) {
+                print "mkdir: $dir\n" if $opt_verbose;
             }
             else {
                 mkpath($dir) || next;
@@ -191,10 +229,11 @@ for (@ARGV) {
          }
     }
 
-    unless ($nothing) {
-        if ($linkonly) {
+    unless ($opt_dryrun) {
+        if ($opt_linkonly) {
 	    link($was,$_) || warn "$ME: cannot create `$_': $!\n";
-        } else {
+        }
+        else {
             rename($was,$_) || warn "$ME: cannot create `$_': $!\n";
 	}
     }
@@ -216,7 +255,7 @@ sub mkpath {
     unless (-d $parent or $path eq $parent) {
         mkpath($parent) || return;
     }
-    #print "mkdir: $path\n" if $verbose;
+    #print "mkdir: $path\n" if $opt_verbose;
     unless (mkdir($path, 0777)) {
         unless (-d $path) {
             warn "$ME: cannot mkdir `$path': $!\n";
@@ -235,36 +274,41 @@ rename - renames multiple files
 =head1 SYNOPSIS
 
 B<rename>
-[B<-bfivnl>]
-[B<-S> I<backup-suffix>]
-[B<-V> {I<numbered>,I<existing>,I<simple>}]
+[B<-bfilnv>]
+[B<-B> I<prefix>]
+[B<-S> I<suffix>]
+[B<-V> I<method>]
+[B<-Y> I<prefix>]
+[B<-z> I<suffix>]
 [B<--backup>]
-[B<--force>]
-[B<--interactive>]
-[B<--verbose>]
-[B<--suffix=>I<backup-suffix>]
-[B<--version-control=>{I<numbered>,I<existing>,I<simple>}]
+[B<--basename-prefix=>I<prefix>]
 [B<--dry-run>]
+[B<--force>]
+[B<--help>]
+[B<--interactive>]
 [B<--just-print>]
 [B<--link-only>]
-[B<--help>]
+[B<--prefix=>I<prefix>]
+[B<--suffix=>I<suffix>]
+[B<--verbose>]
+[B<--version-control=>I<method>]
 [B<--version>]
 I<perlexpr>
-[I<files>]...
+[F<files>]...
 
 =head1 DESCRIPTION
 
-I<Rename> renames the filenames supplied according to the rule
-specified as the first argument.  The argument is a Perl expression
-which is expected to modify the $_ string for at least some of the
-filenames specified.  If a given filename is not modified by the
-expression, it will not be renamed.  If no filenames are given on the
-command line, filenames will be read via standard input.
+I<rename> renames the filenames supplied according to the rule specified
+as the first argument.  The argument is a Perl expression which is
+expected to modify the $_ string for at least some of the filenames
+specified.  If a given filename is not modified by the expression, it
+will not be renamed.  If no filenames are given on the command line,
+filenames will be read via standard input.
 
 If a destination file is unwritable, the standard input is a tty, and
 the B<-f> or B<--force> option is not given, mv prompts the user for
-whether to overwrite the file.  If the response does not begin with
-`y' or `Y', the file is skipped.
+whether to overwrite the file.  If the response does not begin with `y'
+or `Y', the file is skipped.
 
 =head1 OPTIONS
 
@@ -272,70 +316,96 @@ whether to overwrite the file.  If the response does not begin with
 
 =item B<-b>, B<--backup>
 
-Make backups of files that are about to be removed.
+Make backup files.  That is, when about to overwrite a file, rename the
+original instead of removing it.  See the B<-V> or B<--version-control>
+option fo details about how backup file names are determined.
+
+=item B<-B> I<prefix>, B<--prefix=>I<prefix>
+
+Use the B<simple> method to determine backup file names (see the B<-V>
+I<method> or B<--version-control=>I<method> option), and prepend
+I<prefix> to a file name when generating its backup file name.
 
 =item B<-f>, B<--force>
 
 Remove existing destination files and never prompt the user.
+
+=item B<-h>, B<--help>
+
+Print a summary of options and exit.
 
 =item B<-i>, B<--interactive>
 
 Prompt whether to overwrite each destination file that already exists.
 If the response does not begin with `y' or `Y', the file is skipped.
 
-=item B<-v>, B<--verbose>
+=item B<-l>, B<--link-only>
 
-Print the name of each file before renaming it.
+Link files to the new names instead of renaming them. This will keep the
+original files.
 
 =item B<-n>, B<--just-print>, B<--dry-run>
 
 Do everything but the actual renaming, insted just print the name of
 each file that would be renamed. When used together with B<--verbose>,
-also print names of backups.
+also print names of backups (which may or may not be correct depending
+on previous renaming).
 
-=item B<-l>, B<--link-only>
+=item B<-v>, B<--verbose>
 
-Link files to the new names instead of renaming them. This will keep
-the original files.
+Print the name of each file before renaming it.
 
-=item B<--help>
+=item B<-V> I<method>, B<--version-control=>I<method>
 
-Print a usage message on standard output and exit.
+Use I<method> to determine backup file names.  The method can also be
+given by the B<RENAME_VERSION_CONTROL> (or if that's not set, the
+B<VERSION_CONTROL>) environment variable, which is overridden by this
+option.  This option does not affect wheter backup files are made; it
+affects only the name of any backup files that are made.
+
+The value of I<method> is like the GNU Emacs `version-control' variable;
+B<rename> also recognize synonyms that are more descriptive.  The valid
+values are (unique abbreviations are accepted):
+
+=over
+
+=item B<existing> or B<nil>
+
+Make numbered backups of files that already have them, otherwise simple
+backups. This is the default.
+
+=item B<numbered> or B<t>
+
+Make numbered backups.  The numbered backup file name for I<F> is
+B<I<F>.~I<N>~> where I<N> is the version number.
+
+=item B<simple> or B<never>
+
+Make simple backups.  The B<-B> or B<--prefix>, B<-Y> or
+B<--basename-prefix>, and B<-z> or B<--suffix> options specify the
+simple backup file name.  If none of these options are given, then a
+simple backup suffix is used, either the value of
+B<SIMPLE_BACKUP_SUFFIX> environment variable if set, or B<~> otherwise.
+
+=back
 
 =item B<--version>
 
 Print version information on standard output then exit successfully.
 
-=item B<-S>, B<--suffix> I<backup-suffix>
+=item B<-Y> I<prefix>, B<--basename-prefix=>I<prefix>
 
-The suffix used for making simple backup files can be set with the
-B<SIMPLE_BACKUP_SUFFIX> environment variable, which can be overridden by
-this option. If neither of those is given, the default is `~', as it
-is in Emacs.
+Use the B<simple> method to determine backup file names (see the B<-V>
+I<method> or B<--version-control=>I<method> option), and prefix
+I<prefix> to the basename of a file name when generating its backup file
+name. For example, with B<-Y .del/> the simple backup file name for
+B<a/b/foo> is B<a/b/.del/foo>.
 
-=item B<-V>, B<--version-control> {I<numbered>,I<existing>,I<simple>}
+=item B<-z> I<suffix>, B<-S> I<suffix>, B<--suffix=>I<suffix>
 
-The type of backups made can be set with the B<VERSION_CONTROL>
-environment variable, which can be overridden by this option.  If
-B<VERSION_CONTROL> is not set and this option is not given, the
-default backup type is `existing'.  The value of the
-B<VERSION_CONTROL> environment variable and the argument to this
-option are like the GNU Emacs `version-control' variable; they also
-recognize synonyms that are more descriptive.  The valid values are
-(unique abbreviations are accepted):
-
-`t' or `numbered'
-
-	Always make numbered backups.
-
-`nil' or `existing'
-
-	Make numbered backups of files that already
- 	have them, simple backups of the others.
-
-`never' or `simple'
-
-	Always make simple backups.
+Use the B<simple> method to determine backup file names (see the B<-V>
+I<method> or B<--version-control=>I<method> option), and append
+I<suffix> to a file name when generating its backup file name.
 
 =back
 
