@@ -1,7 +1,7 @@
 use Config;
 use File::Basename qw(basename dirname);
 
-($VERSION)=' $Id: rename.PL,v 1.8 2010/09/19 18:16:39 peder Exp $ '=~/v\s*(\d+(?:\.\d+)+)/;
+($VERSION)=' $Id: rename.PL,v 1.9 Exp $ '=~/v\s*(\d+(?:\.\d+)+)/;
 
 chdir(dirname($0));
 ($file = basename($0)) =~ s/\.PL$//;
@@ -22,6 +22,7 @@ use strict;
 use Getopt::Long;
 use Text::Abbrev;
 use File::Basename;
+use File::Glob ':bsd_glob';
 
 my \$VERSION = '$VERSION';
 
@@ -41,6 +42,7 @@ my $opt_force           = 0;
 my $opt_interactive     = 0;
 my $opt_verbose         = 0;
 my $opt_help            = 0;
+my $opt_stdin           = 1;
 my $opt_version         = 0;
 my $opt_linkonly        = 0;
 my $opt_prefix          = '';
@@ -80,6 +82,7 @@ sub error {
 	       'i|interactive'        => \$opt_interactive,
                'l|link-only'          => \$opt_linkonly,
 	       'n|just-print|dry-run' => \$opt_dryrun,
+               's|stdin!'             => \$opt_stdin,
 	       'version'              => \$opt_version,
 	       'v|verbose'            => \$opt_verbose,
 	       'V|version-control=s'  => \$opt_vcm,
@@ -146,8 +149,13 @@ my $op = shift
     or error('missing arguments');
 
 if (!@ARGV) {
-    @ARGV = <STDIN>;
-    chomp(@ARGV);
+    if ($opt_stdin) {
+        @ARGV = <STDIN>;
+        chomp(@ARGV);
+    }
+    else {
+       exit;
+    }
 }
 
 for (@ARGV) {
@@ -179,7 +187,7 @@ for (@ARGV) {
                 }
 	    }
             else {
-		($old) = sort {($b=~/~(\d+)~$/)[0] <=> ($a=~/~(\d+)~$/)[0]} <$_.~*~>;
+		($old) = sort {($b=~/~(\d+)~$/)[0] <=> ($a=~/~(\d+)~$/)[0]} bsd_glob "$_.~*~";
 		$old =~ s/~(\d+)~$/'~'.($1+1).'~'/e;
 		if ($vcm == VCM_TEST) {
                     unless ($old) {
@@ -285,6 +293,7 @@ B<rename>
 [B<--dry-run>]
 [B<--force>]
 [B<--help>]
+[B<--no-stdin>]
 [B<--interactive>]
 [B<--just-print>]
 [B<--link-only>]
@@ -333,6 +342,11 @@ Remove existing destination files and never prompt the user.
 =item B<-h>, B<--help>
 
 Print a summary of options and exit.
+
+=item B<-no-stdin>
+
+Disable reading of filenames from STDIN. Us it when your shell has nullglob
+enabled to make sure rename doesn't wait for input.
 
 =item B<-i>, B<--interactive>
 

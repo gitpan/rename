@@ -1,7 +1,7 @@
 Changes
 MANIFEST
-README
+README.md
 Makefile.PL
 bin/rename.PL
-
 META.yml                                 Module meta-data (added by MakeMaker)
+META.json                                Module JSON meta-data (added by MakeMaker)
